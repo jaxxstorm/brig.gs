@@ -3,99 +3,78 @@ import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import * as database from "./database";
 import * as web from "./webService";
+import * as redis from "./elasticache";
 
 // retrieve the default VPC
-const vpc = new awsx.ec2.Vpc("blink", {
+const vpc = new awsx.ec2.Vpc("kutt", {
     cidrBlock: "172.0.0.0/24",
     numberOfAvailabilityZones: 2,
     numberOfNatGateways: 0, // cheaper
     subnets: [
-        {type: "private", tags: {Name: "blink-private", tier: "production"}},
-        {type: "public", tags: {Name: "blink-public", tier: "production"}}
+        {type: "private", tags: {Name: "kutt-private", tier: "production"}},
+        {type: "public", tags: {Name: "kutt-public", tier: "production"}}
     ],
     tags: {
         tier: "production",
-        Name: "blink"
+        Name: "kutt"
     }
 })
 
-const db = new database.PrivateDatabase("blink", {
+const db = new database.PrivateDatabase("kutt", {
     vpcId: vpc.id,
     cidrBlocks: [ "172.0.0.0/24" ],
     port: 5432,
-    subnetIds: vpc.privateSubnetIds,
+    subnetIds: vpc.publicSubnetIds,
     availabilityZone: "us-west-2b",
 })
 
-const webApp = new web.FargateWebApp("blink-web", {
+const cache = new redis.PrivateManagedRedis("kutt", {
     vpcId: vpc.id,
-    subnetIds: vpc.publicSubnetIds
+    cidrBlocks: [ "172.0.0.0/24" ],
+    subnetIds: vpc.publicSubnetIds,
 })
 
+
+const webApp = new web.FargateWebApp("kutt-web", {
+    image: "kutt/kutt:v2.7.3",
+    containerName: "kutt",
+    containerPort: 3000,
+    vpcId: vpc.id,
+    subnetIds: vpc.publicSubnetIds,
+    environment: [{
+        name: "SITE_NAME", value: "brig.gs",
+    }, {
+        name: "DB_USER", value: db.database.username,
+    }, {
+        name: "DB_HOST", value: db.database.address,
+    }, {
+        name: "DB_NAME", value: "postgres",
+    }, {
+        name: "DB_PASSWORD", value: db.database.password,
+    }, {
+        name: "REDIS_HOST", value: cache.cluster.cacheNodes[0].address
+    }, {
+        name: "DEFAULT_DOMAIN", value: "l.brig.gs"
+    }, {
+        name: "ADMIN_EMAILS", value: "lee@leebriggs.co.uk",
+    }, {
+        name: "JWT_SECRET", value: "foo",
+    }, {
+        name: "MAIL_HOST", value: "email-smtp.us-west-2.amazonaws.com",
+    }, {
+        name: "MAIL_PORT", value: "465",
+    }, {
+        name: "MAIL_USER", value: "AKIAY3XQ4QYBW2C2C4M3",
+    }, {
+        name: "MAIL_PASSWORD", value: "BLRsWG/96TlWn4yEkFl0i4a6wON9QmUfw3P69le2R1Gt",
+    }, {
+        name: "MAIL_FROM", value: "mail@l.brig.gs"
+    }, {
+        name: "MAIL_SECURE", value: "true",
+    }, {
+        name: "NODE_END", value: "development"
+    }],
+    region: "us-west-2",
+}, { dependsOn: [ db, cache ] })
+
 export const url = webApp.url
-
-
-// const ami = pulumi.output(aws.ec2.getAmi({
-//     filters: [
-//         { name: "name", values: [ "amzn2-ami-ecs-hvm*x86_64*" ] }
-//     ],
-//     owners: ["amazon"],
-//     mostRecent: true
-// }))
-
-// const cluster = awsx.ecs.Cluster.getDefault();
-
-// const ecsIAMRole = new aws.iam.Role(`mainRole`, {
-//     assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
-//         Service: "ec2.amazonaws.com",
-//     }),
-// })
-
-// const instanceProfile = new aws.iam.InstanceProfile(`mainProfile`, {
-//     role: ecsIAMRole.name
-// })
-
-
-// new aws.iam.RolePolicyAttachment(`ecsTaskExecPolicy`, {
-//     role: ecsIAMRole.name,
-//     policyArn: 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy',
-// }, { parent: ecsIAMRole })
-
-// new aws.iam.RolePolicyAttachment(`ecsEc2RolePolicy`, {
-//     role: ecsIAMRole.name,
-//     policyArn: aws.iam.ManagedPolicies.AmazonEC2ContainerServiceforEC2Role
-// }, { parent: ecsIAMRole })
-
-// new aws.iam.RolePolicyAttachment(`ecsCloudwatchPolicy`, {
-//     role: ecsIAMRole.name,
-//     policyArn: aws.iam.ManagedPolicies.CloudWatchFullAccess
-// }, { parent: ecsIAMRole })
-
-// const asg = cluster.createAutoScalingGroup("asg", {
-//     templateParameters: { minSize: 1 },
-//     subnetIds: vpc.publicSubnetIds,
-//     launchConfigurationArgs: { 
-//         instanceType: "t2.micro",
-//         associatePublicIpAddress: true,
-//         iamInstanceProfile: instanceProfile.arn,
-//         imageId: ami.id,
-//         rootBlockDevice: {
-//             volumeSize: 5,
-//             volumeType: "gp2",
-//         }
-//     }, 
-// });
-
-// // const blink = new awsx.ecs.EC2Service("blink", {
-// //     cluster,
-// //     taskDefinitionArgs: {
-// //         containers: {
-// //             nginx: {
-// //                 image: "ghcr.io/janejeon/blink:v1.1.1",
-// //                 networkListener: { port: 80 },
-// //             },
-// //         },
-// //     },
-// //     desiredCount: 2,
-// // });
-

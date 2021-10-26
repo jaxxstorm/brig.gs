@@ -1,8 +1,6 @@
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
-import * as awsx from "@pulumi/awsx";
 import * as random from "@pulumi/random";
-import { rds } from "@pulumi/aws/types/enums";
 
 export interface PrivateDatabaseArgs{
 
@@ -19,7 +17,6 @@ export interface PrivateDatabaseArgs{
     multiAz?: pulumi.Input<boolean>;
     backupsEnabled?: pulumi.Input<boolean>;
     
-
 }
 
 export class PrivateDatabase extends pulumi.ComponentResource {
@@ -66,16 +63,17 @@ export class PrivateDatabase extends pulumi.ComponentResource {
             dbSubnetGroupName: this.subnetGroup.name,
             availabilityZone: args.availabilityZone,
             multiAz: args.multiAz || false,
+            vpcSecurityGroupIds: [ this.securityGroup.id ],
             skipFinalSnapshot: args.backupsEnabled ? false : true,
             backupWindow: args.backupsEnabled ? "01:00-02:00" : "",
             deleteAutomatedBackups: true,
             backupRetentionPeriod: 1,
             finalSnapshotIdentifier: `${name}-deleted`
-
         }, { parent: this })
 
+        this.registerOutputs({
 
-        this.registerOutputs({});
+        });
 
     }
 
