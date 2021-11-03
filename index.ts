@@ -64,9 +64,9 @@ const webApp = new web.FargateWebApp("kutt-web", {
     }, {
         name: "MAIL_PORT", value: "465",
     }, {
-        name: "MAIL_USER", value: "AKIAY3XQ4QYBW2C2C4M3",
+        name: "MAIL_USER", value: "",
     }, {
-        name: "MAIL_PASSWORD", value: "BLRsWG/96TlWn4yEkFl0i4a6wON9QmUfw3P69le2R1Gt",
+        name: "MAIL_PASSWORD", value: "",
     }, {
         name: "MAIL_FROM", value: "mail@l.brig.gs"
     }, {
