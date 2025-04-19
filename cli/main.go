@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -10,70 +9,93 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/alecthomas/kong"
+	kongyaml "github.com/alecthomas/kong-yaml"
+	homedir "github.com/mitchellh/go-homedir"
+	"github.com/olekukonko/tablewriter"
 )
 
-type CLI struct {
-	ConfigFile string    `help:"Path to config file (e.g. ~/.config/brig.gs)" default:"~/.config/brig.gs"`
-	BaseURL    string    `help:"Base URL of the URL-shortener service" default:"http://brig.gs"`
-	List       ListCmd   `cmd:"" help:"List all links"`
-	Get        GetCmd    `cmd:"" help:"Get info for a specific short link"`
-	Add        AddCmd    `cmd:"" help:"Add a new short link"`
-	Delete     DeleteCmd `cmd:"" help:"Delete a short link"`
-	APIToken   string    `kong:"-"`
+const appName = "brig"
+
+type Globals struct {
+	ConfigFile kong.ConfigFlag `short:"c" help:"Path to config file" type:"path" default:"${config_path}"`
+	APIToken   string          `help:"API token to authenticate with" name:"api_token" yaml:"api_token"`
+	BaseURL    string          `help:"Base URL of the shortener service" name:"base_url" yaml:"base_url"`
 }
 
-type ListCmd struct{}
+type CLI struct {
+	Globals
+
+	List   ListCmd   `cmd:"" help:"List all short links."`
+	Get    GetCmd    `cmd:"" help:"Get details for a given short link."`
+	Add    AddCmd    `cmd:"" help:"Add a new short link."`
+	Delete DeleteCmd `cmd:"" help:"Delete a short link."`
+}
+
+type ListCmd struct {
+	JSON bool `help:"Return raw JSON instead of a table" short:"j"`
+}
+
 type GetCmd struct {
 	ShortID string `arg:"" help:"Short ID to get"`
 }
+
 type AddCmd struct {
-	ShortID   string `arg:"" help:"Short ID to use"`
-	TargetURL string `arg:"" help:"Target URL to map to"`
+	ShortID   string `arg:"" help:"Short ID to create"`
+	TargetURL string `arg:"" help:"Target URL to map to this short link"`
 }
+
 type DeleteCmd struct {
 	ShortID string `arg:"" help:"Short ID to delete"`
 }
 
-func (c *CLI) LoadConfig() error {
-	path := c.ConfigFile
-	if strings.HasPrefix(path, "~") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path = filepath.Join(home, path[1:])
+func main() {
+	cli := CLI{
+		Globals: Globals{},
 	}
 
-	f, err := os.Open(path)
+	if len(os.Args) < 2 {
+		os.Args = append(os.Args, "--help")
+	}
+
+	configDir, err := homedir.Expand("~/.config")
 	if err != nil {
-		// Not fatal if config file doesn’t exist
-		return nil
+		fmt.Println("Error expanding config dir:", err)
+		os.Exit(1)
 	}
-	defer f.Close()
+	configFile := filepath.Join(configDir, fmt.Sprintf("%s.yaml", appName))
 
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "API_TOKEN=") {
-			c.APIToken = strings.TrimPrefix(line, "API_TOKEN=")
-		}
-	}
+	ctx := kong.Parse(&cli,
+		kong.Name(appName),
+		kong.Description("A CLI for managing short links"),
+		kong.UsageOnError(),
+		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
+		kong.Configuration(kongyaml.Loader, configFile),
+		kong.DefaultEnvars(appName),
+		kong.Vars{"config_path": configFile},
+	)
 
-	return sc.Err()
+	err = ctx.Run(&cli.Globals)
+	ctx.FatalIfErrorf(err)
 }
 
-func (l *ListCmd) Run(cli *CLI) error {
-	if cli.APIToken == "" {
+// ListCmd calls GET /api/list
+func (l *ListCmd) Run(g *Globals) error {
+	if g.APIToken == "" {
 		return errors.New("no API token set")
 	}
-	req, err := http.NewRequest(http.MethodGet, cli.BaseURL+"/api/list", nil)
+	if g.BaseURL == "" {
+		return errors.New("no BaseURL set")
+	}
+
+	url := fmt.Sprintf("%s/api/list", g.BaseURL)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", cli.APIToken)
+	req.Header.Set("Authorization", g.APIToken)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -84,40 +106,62 @@ func (l *ListCmd) Run(cli *CLI) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("error listing links: %s", body)
 	}
-	out, _ := io.ReadAll(resp.Body)
-	fmt.Println(string(out))
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if l.JSON {
+		// Output raw JSON
+		fmt.Println(string(bodyBytes))
+		return nil
+	}
+
+	// Otherwise parse the JSON into a map and show a table
+	var links map[string]string
+	if err := json.Unmarshal(bodyBytes, &links); err != nil {
+		return fmt.Errorf("error parsing JSON: %v", err)
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Short ID", "URL"})
+
+	for shortID, targetURL := range links {
+		table.Append([]string{shortID, targetURL})
+	}
+
+	table.Render()
 	return nil
 }
 
-func (g *GetCmd) Run(cli *CLI) error {
-	if cli.APIToken == "" {
+// GetCmd calls GET /<short_id>
+func (c *GetCmd) Run(g *Globals) error {
+	if g.APIToken == "" {
 		return errors.New("no API token set")
 	}
-	if g.ShortID == "" {
+	if g.BaseURL == "" {
+		return errors.New("no BaseURL set")
+	}
+	if c.ShortID == "" {
 		return errors.New("missing short ID")
 	}
-	url := fmt.Sprintf("%s/%s", cli.BaseURL, g.ShortID)
+
+	url := fmt.Sprintf("%s/%s", g.BaseURL, c.ShortID)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", cli.APIToken)
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := client.Do(req)
+	req.Header.Set("Authorization", g.APIToken)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
-	case http.StatusFound, http.StatusOK:
-		fmt.Printf("Short ID '%s' found, Worker responded with %d.\n", g.ShortID, resp.StatusCode)
+	case http.StatusOK, http.StatusFound:
+		fmt.Printf("Short ID '%s' found, status %d.\n", c.ShortID, resp.StatusCode)
 	case http.StatusNotFound:
-		fmt.Printf("Short ID '%s' not found.\n", g.ShortID)
+		fmt.Printf("Short ID '%s' not found.\n", c.ShortID)
 	default:
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
@@ -125,24 +169,31 @@ func (g *GetCmd) Run(cli *CLI) error {
 	return nil
 }
 
-func (a *AddCmd) Run(cli *CLI) error {
-	if cli.APIToken == "" {
+// AddCmd calls POST /api/create
+func (a *AddCmd) Run(g *Globals) error {
+	if g.APIToken == "" {
 		return errors.New("no API token set")
+	}
+	if g.BaseURL == "" {
+		return errors.New("no BaseURL set")
 	}
 	if a.ShortID == "" || a.TargetURL == "" {
 		return errors.New("missing short ID or target URL")
 	}
+
 	bodyMap := map[string]string{
 		"short_id":   a.ShortID,
 		"target_url": a.TargetURL,
 	}
 	bodyBytes, _ := json.Marshal(bodyMap)
-	req, err := http.NewRequest(http.MethodPost, cli.BaseURL+"/api/create", bytes.NewBuffer(bodyBytes))
+	url := fmt.Sprintf("%s/api/create", g.BaseURL)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", g.APIToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", cli.APIToken)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -153,24 +204,29 @@ func (a *AddCmd) Run(cli *CLI) error {
 		resBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("error creating link: %s", resBody)
 	}
-	fmt.Println("Link created successfully.")
+	fmt.Printf("Link '%s' created -> %s\n", a.ShortID, a.TargetURL)
 	return nil
 }
 
-func (d *DeleteCmd) Run(cli *CLI) error {
-	if cli.APIToken == "" {
+// DeleteCmd calls DELETE /api/delete/<short_id>
+func (d *DeleteCmd) Run(g *Globals) error {
+	if g.APIToken == "" {
 		return errors.New("no API token set")
+	}
+	if g.BaseURL == "" {
+		return errors.New("no BaseURL set")
 	}
 	if d.ShortID == "" {
 		return errors.New("missing short ID")
 	}
 
-	url := fmt.Sprintf("%s/api/delete/%s", cli.BaseURL, d.ShortID)
+	url := fmt.Sprintf("%s/api/delete/%s", g.BaseURL, d.ShortID)
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", cli.APIToken)
+	req.Header.Set("Authorization", g.APIToken)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -183,17 +239,4 @@ func (d *DeleteCmd) Run(cli *CLI) error {
 	}
 	fmt.Printf("Short ID '%s' deleted.\n", d.ShortID)
 	return nil
-}
-
-func main() {
-	var cli CLI
-	ctx := kong.Parse(&cli)
-	err := cli.LoadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not load config: %v\n", err)
-	}
-	if runErr := ctx.Run(&cli); runErr != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", runErr)
-		os.Exit(1)
-	}
 }
