@@ -1,0 +1,13 @@
+{
+    "name": "brig.gs",
+    "version": "1.0.0",
+    "scripts": {
+      "build": "tsc",
+      "start": "wrangler dev"
+    },
+    "devDependencies": {
+      "typescript": "^5.0.4",
+      "@cloudflare/workers-types": "^4.20230312.0"
+    }
+  }
+  

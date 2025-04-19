@@ -1,0 +1,28 @@
+name = "brig-gs"
+main = "dist/index.js"
+compatibility_date = "2023-01-01" 
+
+routes = [
+  { pattern = "brig.gs", custom_domain = true }
+]
+
+account_id = "54a59d875d1b823cc904582eb53198fd"
+workers_dev = true
+
+# KV namespace configuration
+kv_namespaces = [
+  { binding = "LINKS", id = "72951b26f6384639be9c0778d927026c" }
+]
+[build]
+  command = "npm run build"
+
+
+[env.dev]
+route = ""
+workers_dev = true
+
+[observability]
+enabled = true
+
+[placement]
+mode = "smart"
