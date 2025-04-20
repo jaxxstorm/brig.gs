@@ -144,28 +144,51 @@ func (c *GetCmd) Run(g *Globals) error {
 		return errors.New("missing short ID")
 	}
 
-	url := fmt.Sprintf("%s/%s", g.BaseURL, c.ShortID)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	fullURL := fmt.Sprintf("%s/%s", g.BaseURL, c.ShortID)
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", g.APIToken)
 
+	// Perform request
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	switch resp.StatusCode {
+	// Prepare data for our table
+	statusCode := resp.StatusCode
+	location := resp.Header.Get("Location")
+
+	// Decide the message based on status
+	var message string
+	switch statusCode {
 	case http.StatusOK, http.StatusFound:
-		fmt.Printf("Short ID '%s' found, status %d.\n", c.ShortID, resp.StatusCode)
+		message = "Found"
 	case http.StatusNotFound:
-		fmt.Printf("Short ID '%s' not found.\n", c.ShortID)
+		message = "Not Found"
 	default:
+		// If it's something else, read the body for any error details
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
+		return fmt.Errorf("unexpected status %d: %s", statusCode, body)
 	}
+
+	// Render a table with the info
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Short ID", "Request URL", "HTTP Status", "Message", "Location"})
+
+	table.Append([]string{
+		c.ShortID,
+		fullURL,
+		fmt.Sprintf("%d", statusCode),
+		message,
+		location,
+	})
+
+	table.Render()
+
 	return nil
 }
 
