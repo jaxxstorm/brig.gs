@@ -1,0 +1,12 @@
+# Example configuration file for brig CLI
+# Save this as ~/.brig.gs.yaml or specify with --config flag
+
+# API token for authentication
+api_token: "your-api-token-here"
+
+# Base URL of your brig.gs instance
+base_url: "https://brig.gs"
+
+# You can also set these via environment variables:
+# export BRIG_API_TOKEN="your-api-token-here"
+# export BRIG_BASE_URL="https://brig.gs"
