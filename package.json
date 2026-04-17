@@ -6,7 +6,7 @@
       "start": "wrangler dev"
     },
     "devDependencies": {
-      "typescript": "^5.0.4",
+      "typescript": "^6.0.0",
       "@cloudflare/workers-types": "^4.20230312.0"
     }
   }
