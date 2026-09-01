@@ -2,7 +2,7 @@ module github.com/jaxxstorm/brig.gs/cli
 
 go 1.24.0
 
-toolchain go1.26.5
+toolchain go1.27.1
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
